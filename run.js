@@ -100,7 +100,7 @@ export async function main(ns) {
                     available_threads = w_usable_threads;
                     i--;
                 }
-                ns.exec("w.js", server, available_threads, target, 0);
+                ns.exec("w.js", server, available_threads, target);
                 w_usable_threads -= available_threads;
             } else if (g_usable_threads) {
                 if (available_threads > g_usable_threads) {
