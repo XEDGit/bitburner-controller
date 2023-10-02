@@ -82,7 +82,6 @@ export async function main(ns) {
             await ns.sleep(1000);
             continue;
         }
-        msg = false;
         let w_usable_threads = available_threads_fract * 10;
         let g_usable_threads = available_threads_fract * 2;
         let h_usable_threads = available_threads_fract;
