@@ -29,7 +29,7 @@ function getGain(ns, stocks, s) {
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.tail();
-    ns.moveTail(innerWidth - 525 - 332, 0);
+    ns.moveTail(innerWidth - 550 - 332, 0);
     ns.resizeTail(330, 450);
     let stocks = new Set(ns.stock.getSymbols().filter((n) => (n)));
     for (let s of stocks) {
@@ -86,7 +86,7 @@ export async function main(ns) {
             }
             stocks[s] = ns.stock.getPosition(s);
             if (stocks[s][Pos.NUM_LONG]) {
-                output.push(s + ": " + (avg * 100).toFixed(1) + "% G/L: " + ns.formatNumber(getGain(ns, stocks, s)));
+                output.push(["%4s: %s%% G/L: %s", s, (avg * 100).toFixed(1), ns.formatNumber(getGain(ns, stocks, s))]);
             }
         }
         if (orders.length > 10) {
@@ -98,7 +98,7 @@ export async function main(ns) {
         }
         ns.print("__________________________");
         for (let s of output) {
-            ns.print(s);
+            ns.printf(...s);
         }
         ns.print("__________________________");
         ns.print("Total G/L: ", ns.formatNumber(revenue))

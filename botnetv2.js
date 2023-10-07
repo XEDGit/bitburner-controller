@@ -103,7 +103,7 @@ class Target {
                 if (this.batchTimer < 3000)
                     this.batchTimer += 100;
                 else if (this.moneyDiv > 0.2)
-                    this.moneyDiv -= 0.1;
+                    this.moneyDiv = Math.floor(this.moneyDiv - 0.1);
                 else if (this.batchTimer < 10000)
                     this.batchTimer += 500;
                 handles.forEach(clearTimeout);
@@ -173,14 +173,14 @@ function updateValues(target, balancer) {
 
 /** @param {NS} ns **/
 async function launchBatch(ns, target, attackers, balancer) {
-    if (target.wait < Date.now() && balancer.getAvgBatches() + 2 >= target.runningBatches) {
+    if (target.wait && target.wait < Date.now() && balancer.getAvgBatches() + 1 >= target.runningBatches) {
         if (target.wait)
         {
             balancer.size++;
             target.wait = 0;
         }
     }
-    if (balancer.getAvgBatches() + 2 >= target.runningBatches && totThreadsAttackers > target.exeTotThreads && target.wait < Date.now()) {
+    if (balancer.getAvgBatches() + 1 >= target.runningBatches && totThreadsAttackers > target.exeTotThreads && target.wait < Date.now()) {
         handles.push(setTimeout(updateValues.bind(this, target, balancer), target.wkTime + (target.pause * 3)));
         handles.push(setTimeout(target.attack.bind(target), target.exeTimes[0], attackers, target.exeThreads[0], 0));
         handles.push(setTimeout(target.attack.bind(target), target.exeTimes[1], attackers, target.exeThreads[1], 0));
@@ -201,19 +201,36 @@ function starter(ns, target, attackers, balancer) {
 
 /** @param {NS} ns **/
 function logger(ns, targets, batchTimer, balancer, start = Date.now()) {
+    const shortTime = (s) => {
+        return s.split(" ").map((s, idx) => {
+            let odd = idx % 2;
+            s = s.slice(0, 2 - odd);
+            if (odd)
+                s = s.concat(" ");
+            return s;
+        }).join("");
+    };
     ns.clearLog();
-    let logs = [];
-    ns.print("balance: ", Math.floor(balancer.getAvgBatches()), ", attackers: ", balancer.size, " batches: ", balancer.total);
-    ns.printf("Free threads: %-5s Active time: %s", ns.formatNumber(totThreadsAttackers, 0), ns.tFormat(Date.now() - start));
-    ns.print("__________________________________________________")
-    ns.printf(" %-17s| Threads | Batches | Time", "Name");
+    let logs = ["_____________________________________________________"];
     targets.forEach((target) => {
         if (target.wait - Date.now() < 0)
-            logs.unshift(ns.sprintf("%-17s | %-7s | %-7s | %s", target.name, ns.formatNumber(target.exeThreads.reduce((acc, curr) => {return acc + curr;}), 0), ns.formatNumber(target.runningBatches, 0), ns.tFormat(target.wkTime + (target.pause * 3)).split(" ").map((s, idx) => {return s.slice(0, idx % 2? 1 : 2)}).join(" ")));
+            logs.push(ns.sprintf("%-7s | %-3s | %-3s | %3s/%-3s | %4s/%-4s | %s", target.name.slice(0, 7), ns.formatNumber(target.exeThreads.reduce((acc, curr) => {return acc + curr;}), 0), ns.formatNumber(target.runningBatches, 0), ns.formatNumber(ns.getServerSecurityLevel(target.name), 0), ns.formatNumber(ns.getServerMinSecurityLevel(target.name), 0), ns.formatNumber(ns.getServerMoneyAvailable(target.name), 0), ns.formatNumber(ns.getServerMaxMoney(target.name), 0), shortTime(ns.tFormat(target.wkTime + (target.pause * 3)))));
         else
-            logs.push(ns.sprintf("%-17s | asleep: %s", target.name, ns.tFormat(target.wait - Date.now())));
+            logs.unshift(ns.sprintf("%-7s | asleep: %s", target.name.slice(0, 7), shortTime(ns.tFormat(target.wait - Date.now()))));
     });
-    logs.forEach((log, idx) => {ns.printf("[%-2d] %s",idx, log)});
+    let offset = 1;
+    logs.forEach((log, idx, a) => {
+        if (log[0] != '_')
+            ns.printf("[%-2d] %s",a.length - idx - offset, log);
+        else {
+            ns.print(log);
+            offset = 0;
+        }
+    });
+    ns.printf("[  ]  %-7s| Thr | Bat | Sec/Min | Money/Max | Time", "Target");
+    ns.print("_____________________________________________________")
+    ns.printf("Balance: %-10d | Targets: %-5d | Batches: %d", Math.floor(balancer.getAvgBatches()), balancer.size, balancer.total);
+    ns.printf("Free threads: %-5s | Active time: %s", ns.formatNumber(totThreadsAttackers, 0), shortTime(ns.tFormat(Date.now() - start)));
     handles.push(setTimeout(logger.bind(balancer), 1000, ns, targets, batchTimer, balancer, start));
 }
 
@@ -242,7 +259,7 @@ export async function main(ns) {
     ns.atExit(() => handles.forEach(clearTimeout));
     ns.clearLog();
     ns.tail();
-    let x = innerWidth - 525;
+    let x = innerWidth - 550;
     let y = 0;
     ns.moveTail(x, y);
     ns.resizeTail(innerWidth - x, innerHeight - y);
@@ -263,7 +280,7 @@ export async function main(ns) {
         /** @param {NS} ns **/\n\
         export async function main(ns) {\n\
             let target = ns.args[0];\n\
-            await ns." + actionList[i] + "(target)\n\
+            await ns." + actionList[i] + "(target, {stock:true})\n\
         }\n", "w");
     for (let server of attackers) {
         ns.scp(binList, server);
