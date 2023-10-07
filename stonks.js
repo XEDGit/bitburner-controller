@@ -15,7 +15,7 @@ const Pos = {
 
 function minStockPurchasable(ns, s, posType, avMoneyDivisor) {
     let num = ns.stock.getMaxShares(s);
-    while (num && ns.stock.getPurchaseCost(s, num, posType) > ns.getPlayer().money / avMoneyDivisor) {
+    while (num && ns.stock.getPurchaseCost(s, num, posType) > ns.getPlayer().money * avMoneyDivisor) {
         num = Math.floor((num - 1) * 0.9);
     }
     return num;
@@ -29,7 +29,7 @@ function getGain(ns, stocks, s) {
 export async function main(ns) {
     ns.disableLog("ALL");
     ns.tail();
-    ns.moveTail(innerWidth - 550, 0);
+    ns.moveTail(innerWidth - 525 - 332, 0);
     ns.resizeTail(330, 450);
     let stocks = new Set(ns.stock.getSymbols().filter((n) => (n)));
     for (let s of stocks) {
@@ -74,7 +74,7 @@ export async function main(ns) {
             //     ns.stock.buyStock(s, num);
             } else if (!stocks[s][Pos.NUM_LONG] && !stocks[s][Pos.NUM_SHORT]) {
                 if (avg >= 0.6) {
-                    let num = minStockPurchasable(ns, s, "Long", 2);
+                    let num = minStockPurchasable(ns, s, "Long", 1);
                     orders.push("+ Long " + s + ": " + ns.formatNumber(ns.stock.getPurchaseCost(s, num, "Long")));
                     ns.stock.buyStock(s, num);
                 }
