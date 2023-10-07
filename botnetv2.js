@@ -1,8 +1,19 @@
-let handles = [];
 const actionList = ["weaken", "grow", "hack"];
 const makeJs = (name) => name + ".js";
 const binList = actionList.map(makeJs);
+let handles = [];
+let totThreadsAttackers = 0;
 
+class BatchBalancer {
+    constructor() {
+        this.total = 0;
+        this.size = 0;
+    }
+
+    getAvgBatches() {
+        return this.total / this.size;
+    }
+}
 
 class Target {
     /** @param {NS} ns */
@@ -11,17 +22,20 @@ class Target {
         this.name = name;
         this.moneyDiv = moneyDiv;
         this.batchTimer = batchTimer;
+        this.logInfo = "";
+        this.runningBatches = 0;
         this.wait = 0;
         this.wkTime = 0;
         this.gwTime = 0;
         this.hkTime = 0;
-        this.pause = 3000;
+        this.pause = 300;
         this.exeTimes = [0, 0, 0, 0];
         this.exeThreads = [0, 0, 0, 0];
+        this.exeTotThreads = 0;
     }
 
     moneySteal() {
-        let ret = this.ns.getServerMaxMoney(this.name) / this.moneyDiv;
+        let ret = this.ns.getServerMaxMoney(this.name) * this.moneyDiv;
         return ret;
     }
 
@@ -57,6 +71,7 @@ class Target {
         this.exeThreads[0] = this.calcWeakThreads(this.exeThreads[3] * 0.002);
         this.exeThreads[2] = this.calcGrowThreads(this.moneySteal());
         this.exeThreads[1] = this.calcWeakThreads(this.exeThreads[2] * 0.004);
+        this.exeTotThreads = this.exeThreads.reduce((a, c) => {return a + c;})
     }
 
     calcAll() {
@@ -65,11 +80,7 @@ class Target {
     }
 
     attack(attackers, threads, type) {
-        if (this.wait > this.ns.getResetInfo().lastAugReset) {
-            return;
-        }
         let z = 0;
-        debugger;
         while (threads) {
             for (let i = 0; i < attackers.length; i++) {
                 let attacker = attackers[i];
@@ -87,16 +98,18 @@ class Target {
                 threads -= avThreads;
             }
             if (z++ == 10) {
-                this.ns.toast("Error: botnet sync requires too much RAM, restarting with lower money steal", "error");
+                this.ns.toast("Error syncing botnet, restarting with lower settings");
                 this.ns.closeTail();
-                let div = this.moneyDiv;
-                if (this.batchTimer >= 10000)
-                    div += 1;
+                if (this.batchTimer < 3000)
+                    this.batchTimer += 100;
+                else if (this.moneyDiv > 0.2)
+                    this.moneyDiv -= 0.1;
+                else if (this.batchTimer < 10000)
+                    this.batchTimer += 500;
                 handles.forEach(clearTimeout);
                 z = 0;
-                while (z++ < 10)
-                    this.ns.spawn(this.ns.getScriptName(), 1, div, this.batchTimer < 10000 ? this.batchTimer + 1000 : this.batchTimer);
-                throw new Error("Couldn't spawn new script");
+                this.ns.spawn(this.ns.getScriptName(), 1, this.moneyDiv, this.batchTimer);
+                this.ns.exit();
             }
         }
     }
@@ -152,18 +165,75 @@ function tryNuke(ns, server) {
     }
 }
 
-function launchBatch(target, attackers) {
-    target.ns.print("batch on ", target.name, " with ", target.exeThreads.reduce((acc, curr) => {return acc + curr;}), " threads");
-    handles.push(setTimeout(target.attack.bind(target), target.exeTimes[0], attackers, target.exeThreads[0], 0));
-    handles.push(setTimeout(target.attack.bind(target), target.exeTimes[1], attackers, target.exeThreads[1], 0));
-    handles.push(setTimeout(target.attack.bind(target), target.exeTimes[2], attackers, target.exeThreads[2], 1));
-    handles.push(setTimeout(target.attack.bind(target), target.exeTimes[3], attackers, target.exeThreads[3], 2));
-    handles.push(setTimeout(launchBatch, target.batchTimer, target, attackers));
+function updateValues(target, balancer) {
+    totThreadsAttackers += target.exeTotThreads;
+    target.runningBatches--;
+    balancer.total--;
 }
 
-function starter(target, attackers) {
+/** @param {NS} ns **/
+async function launchBatch(ns, target, attackers, balancer) {
+    if (target.wait < Date.now() && balancer.getAvgBatches() + 2 >= target.runningBatches) {
+        if (target.wait)
+        {
+            balancer.size++;
+            target.wait = 0;
+        }
+    }
+    if (balancer.getAvgBatches() + 2 >= target.runningBatches && totThreadsAttackers > target.exeTotThreads && target.wait < Date.now()) {
+        handles.push(setTimeout(updateValues.bind(this, target, balancer), target.wkTime + (target.pause * 3)));
+        handles.push(setTimeout(target.attack.bind(target), target.exeTimes[0], attackers, target.exeThreads[0], 0));
+        handles.push(setTimeout(target.attack.bind(target), target.exeTimes[1], attackers, target.exeThreads[1], 0));
+        handles.push(setTimeout(target.attack.bind(target), target.exeTimes[2], attackers, target.exeThreads[2], 1));
+        handles.push(setTimeout(target.attack.bind(target), target.exeTimes[3], attackers, target.exeThreads[3], 2));
+        totThreadsAttackers -= target.exeTotThreads;
+        target.runningBatches++;
+        balancer.total++;
+    }
+    handles.push(setTimeout(launchBatch, target.batchTimer, ns, target, attackers, balancer));
+}
+
+/** @param {NS} ns **/
+function starter(ns, target, attackers, balancer) {
     target.calcAll();
-    handles.push(setTimeout(launchBatch, target.wait, target, attackers));
+    handles.push(setTimeout(launchBatch, 0, ns, target, attackers, balancer));
+}
+
+/** @param {NS} ns **/
+function logger(ns, targets, batchTimer, balancer, start = Date.now()) {
+    ns.clearLog();
+    let logs = [];
+    ns.print("balance: ", Math.floor(balancer.getAvgBatches()), ", attackers: ", balancer.size, " batches: ", balancer.total);
+    ns.printf("Free threads: %-5s Active time: %s", ns.formatNumber(totThreadsAttackers, 0), ns.tFormat(Date.now() - start));
+    ns.print("__________________________________________________")
+    ns.printf(" %-17s| Threads | Batches | Time", "Name");
+    targets.forEach((target) => {
+        if (target.wait - Date.now() < 0)
+            logs.unshift(ns.sprintf("%-17s | %-7s | %-7s | %s", target.name, ns.formatNumber(target.exeThreads.reduce((acc, curr) => {return acc + curr;}), 0), ns.formatNumber(target.runningBatches, 0), ns.tFormat(target.wkTime + (target.pause * 3)).split(" ").map((s, idx) => {return s.slice(0, idx % 2? 1 : 2)}).join(" ")));
+        else
+            logs.push(ns.sprintf("%-17s | asleep: %s", target.name, ns.tFormat(target.wait - Date.now())));
+    });
+    logs.forEach((log, idx) => {ns.printf("[%-2d] %s",idx, log)});
+    handles.push(setTimeout(logger.bind(balancer), 1000, ns, targets, batchTimer, balancer, start));
+}
+
+function initTarget(ns, target, attackers, balancer) {
+    const moneyDiff = ns.getServerMaxMoney(target.name) - ns.getServerMoneyAvailable(target.name);
+    if (moneyDiff) {
+        let threads = target.calcGrowThreads(moneyDiff);
+        target.attack(attackers, Math.floor(threads * 0.004) ? Math.floor(threads * 0.004) : 1, 0);
+        target.attack(attackers, threads ? threads : 1, 1);
+        target.wait = Date.now() + ns.getWeakenTime(target.name) + target.pause;
+    }
+    const secDiff = ns.getServerSecurityLevel(target.name) - ns.getServerMinSecurityLevel(target.name);
+    if (secDiff) {
+        target.wait = 0;
+        let threads = target.calcWeakThreads(secDiff);
+        target.attack(attackers, threads ? threads : 1, 0);
+        target.wait = Date.now() + ns.getWeakenTime(target.name) + target.pause;
+    }
+    if (!moneyDiff && !secDiff)
+        balancer.size++;
 }
 
 /** @param {NS} ns */
@@ -172,17 +242,20 @@ export async function main(ns) {
     ns.atExit(() => handles.forEach(clearTimeout));
     ns.clearLog();
     ns.tail();
-    let x = innerWidth / 16 * 9;
-    let y = innerHeight / 2 + 20;
+    let x = innerWidth - 525;
+    let y = 0;
     ns.moveTail(x, y);
     ns.resizeTail(innerWidth - x, innerHeight - y);
     let serverName = ns.getServer().hostname;
     let attackers = checkServer(ns, serverName);
+    attackers = attackers.sort((a, b) => {return ns.getServerMaxMoney(b) != ns.getServerMaxMoney(a)});
     let targets = [];
-    let moneyDiv = 3;
+    let player = ns.getPlayer();
+    let moneyDiv = 0.6;
+    let balancer = new BatchBalancer();
     if (ns.args.length >= 1)
-        moneyDiv = parseInt(ns.args[0]);
-    let batchTimer = 1000;
+        moneyDiv = parseFloat(ns.args[0]);
+    let batchTimer = 300;
     if (ns.args.length >= 2)
         batchTimer = parseInt(ns.args[1]);
     for (let i in actionList)
@@ -196,38 +269,31 @@ export async function main(ns) {
         ns.scp(binList, server);
         if (ns.getServerMaxMoney(server))
             targets.push(new Target(ns, server, moneyDiv, batchTimer));
+        totThreadsAttackers += freeThreadCount(ns, server, 1.75);
     }
+    totThreadsAttackers = Math.floor(totThreadsAttackers * 0.95);
     for (let target of targets) {
-        const moneyDiff = ns.getServerMaxMoney(target.name) - ns.getServerMoneyAvailable(target.name);
-        if (moneyDiff) {
-            let threads = target.calcGrowThreads(moneyDiff);
-            target.attack(attackers, Math.floor(threads * 0.004) ? Math.floor(threads * 0.004) : 1, 0);
-            target.attack(attackers, threads ? threads : 1, 1);
-            target.wait = ns.getResetInfo().lastAugReset + ns.getWeakenTime(target.name) + target.pause;
-        }
-        const secDiff = ns.getServerSecurityLevel(target.name) - ns.getServerMinSecurityLevel(target.name);
-        if (secDiff) {
-            target.wait = 0;
-            let threads = target.calcWeakThreads(secDiff);
-            target.attack(attackers, threads ? threads : 1, 0);
-            target.wait = ns.getResetInfo().lastAugReset + ns.getWeakenTime(target.name) + target.pause;
-        }
+        initTarget(ns, target, attackers, balancer);
+        starter(ns, target, attackers, balancer);
     }
-    for (let target of targets) {
-        starter(target, attackers);
-    }
+    logger(ns, targets, batchTimer, balancer);
     while (true) {
-        await ns.asleep(60000);
+        await ns.asleep(30000);
         let newAttackers = checkServer(ns, serverName, [], false);
         if (newAttackers.length > attackers.length) {
             ns.print("Refreshing servers...");
-            newAttackers.filter(!targets.includes).forEach((server) => {
+            newAttackers.filter((server) => {return !targets.includes(server)}).forEach((server) => {
                 ns.scp(binList, server);
+                let target = new Target(ns, server, moneyDiv, batchTimer);
                 if (ns.getServerMaxMoney(server))
-                    targets.push(new Target(ns, server, moneyDiv, batchTimer));
-                starter(server, attackers);
+                    targets.push(target);
+                initTarget(ns, target, attackers, balancer);
+                starter(ns, target, attackers, balancer);
             });
+            attackers = attackers.sort((a, b) => {return ns.getServerMaxMoney(b) / ns.getServerMinSecurityLevel(b) != ns.getServerMaxMoney(a) / ns.getServerMinSecurityLevel(a)});
         }
+        if (player.skills.hacking < ns.getPlayer().skills.hacking)
+            targets.forEach((target) => target.calcAll());
         if (handles.length >= 1000) {
             handles = handles.slice(handles.length - 1000);
         }
