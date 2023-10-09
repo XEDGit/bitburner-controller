@@ -186,28 +186,35 @@ function updateValues(target, balancer) {
 /** @param {NS} ns **/
 function launchBatch(ns, targets, attackers, balancer, player) {
     for (let target of targets) {
+        // On first batch execution, add info to balancer and calculate needed threads and times
         if (target.wait && target.wait < Date.now()) {
             balancer.size++;
             balancer.totRequiredThreads += target.exeTotThreads;
             target.wait = 0;
             target.calcAll();
         }
+        // If no setup time (target.wait) needed and there are threads available run a batch
         if (!target.wait && balancer.getIdealBatches() > target.runningBatches && totThreadsAttackers > target.exeTotThreads) {
+            // Add back removed threads
             handles.push(setTimeout(updateValues.bind(this, target, balancer), target.wkTime + (target.pause * 3)));
+            // Set timeouts for attaccke functions, sequence is W-W-G-H
             handles.push(setTimeout(target.attack.bind(target), target.exeTimes[0], attackers, target.exeThreads[0], 0));
             handles.push(setTimeout(target.attack.bind(target), target.exeTimes[1], attackers, target.exeThreads[1], 0));
             handles.push(setTimeout(target.attack.bind(target), target.exeTimes[2], attackers, target.exeThreads[2], 1));
             handles.push(setTimeout(target.attack.bind(target), target.exeTimes[3], attackers, target.exeThreads[3], 2));
+            // Remove threads used from total
             totThreadsAttackers -= target.exeTotThreads;
             target.runningBatches++;
             balancer.totalBatches++;
         }
     }
+    // If hacking level raised, update targets threads and times
     if (player.skills.hacking < ns.getPlayer().skills.hacking) {
         balancer.totRequiredThreads = 0;
         targets.forEach((target) => {target.calcAll(); balancer.totRequiredThreads += target.exeTotThreads;});
         player = ns.getPlayer();
     }
+    // Set next start of batches
     handles.push(setTimeout(launchBatch, targets[0].batchTimer, ns, targets, attackers, balancer, player));
 }
 
@@ -247,8 +254,8 @@ function logger(ns, targets, balancer, start = Date.now()) {
     handles.push(setTimeout(logger.bind(balancer), 100, ns, targets, balancer, start));
 }
 
-function initTarget(ns, target, attackers, balancer) {
-    target.calcAll();
+function initTarget(ns, target, attackers) {
+    // If target isn't at MaxMoney grow/weaken
     const moneyDiff = ns.getServerMaxMoney(target.name) - ns.getServerMoneyAvailable(target.name);
     if (moneyDiff) {
         target.wait = Date.now() + ns.getWeakenTime(target.name) + target.pause;
@@ -256,6 +263,7 @@ function initTarget(ns, target, attackers, balancer) {
         target.attack(attackers, Math.floor(threads * 0.004) ? Math.floor(threads * 0.004) : 1, 0);
         target.attack(attackers, threads ? threads : 1, 1);
     }
+    // If target isn't at MinSecurity weaken
     const secDiff = ns.getServerSecurityLevel(target.name) - ns.getServerMinSecurityLevel(target.name);
     if (secDiff) {
         target.wait = Date.now() + ns.getWeakenTime(target.name) + target.pause;
@@ -269,6 +277,7 @@ export async function main(ns) {
     ns.disableLog("ALL");
     totThreadsAttackers = 0;
     ns.atExit(() => handles.forEach(clearTimeout));
+    // Setup tail
     ns.clearLog();
     ns.tail();
     let x = innerWidth - 550;
@@ -276,12 +285,14 @@ export async function main(ns) {
     ns.moveTail(x, y);
     ns.resizeTail(innerWidth - x, innerHeight - y);
     let serverName = ns.getServer().hostname;
+    // Find all servers and kill existing scripts
     let attackers = checkServer(ns, serverName);
     let targets = [];
     let player = ns.getPlayer();
     let moneyDiv = 0.6;
     if (ns.args.length >= 1)
         moneyDiv = parseFloat(ns.args[0]);
+    // Create wgh files
     for (let i in actionList)
         ns.write(binList[i], "\
         /** @param {NS} ns **/\n\
@@ -289,20 +300,26 @@ export async function main(ns) {
             let target = ns.args[0];\n\
             await ns." + actionList[i] + "(target, {stock:true})\n\
         }\n", "w");
+    // Choose targets between attackers and find total available threads
     for (let server of attackers) {
         ns.scp(binList, server);
         if (ns.getServerMaxMoney(server))
             targets.push(new Target(ns, server, moneyDiv));
         totThreadsAttackers += freeThreadCount(ns, server, 1.75);
     }
+    // Sort targets by MaxMoney / MinSecurity
     targets = targets.sort((a, b) => {return (ns.getServerMaxMoney(b.name) / ns.getServerMinSecurityLevel(b.name)) - (ns.getServerMaxMoney(a.name) / ns.getServerMinSecurityLevel(a.name))});
+    // Removing part of total available treads (Fixes using all available threads)
     totThreadsAttackers = Math.floor(totThreadsAttackers * 0.95);
     let balancer = new BatchBalancer(totThreadsAttackers);
+    // InitTarget to weaken and grow if target isn't at MinSecurity or MaxMoney
     for (let target of targets) {
-        initTarget(ns, target, attackers, balancer);
+        initTarget(ns, target, attackers);
     }
     logger(ns, targets, balancer);
+    // Start batches
     launchBatch(ns, targets, attackers, balancer, player);
+    // Every 30 seconds, check for new servers unlocked and add them to the targets/attackers
     while (true) {
         await ns.asleep(30000);
         let newAttackers = checkServer(ns, serverName, [], false);
@@ -311,16 +328,16 @@ export async function main(ns) {
             newAttackers.filter((server) => {return !targets.includes(server)}).forEach((server) => {
                 ns.scp(binList, server);
                 attackers.push(server);
+                totThreadsAttackers += freeThreadCount(ns, server, 1.75);
                 if (ns.getServerMaxMoney(server)) {
                     let target = new Target(ns, server, moneyDiv);
                     targets.push(target);
-                    initTarget(ns, target, attackers, balancer);
-                    totThreadsAttackers += target.exeTotThreads;
-                    balancer.totRequiredThreads += target.exeTotThreads;
+                    initTarget(ns, target, attackers);
                 }
             });
             targets = targets.sort((a, b) => {return (ns.getServerMaxMoney(b.name) / ns.getServerMinSecurityLevel(b.name)) - (ns.getServerMaxMoney(a.name) / ns.getServerMinSecurityLevel(a.name))});
         }
+        // Truncate setTimeout handles list to 10000 elements
         if (handles.length >= 10000) {
             handles = handles.slice(-10000);
         }
