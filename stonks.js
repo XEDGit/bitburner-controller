@@ -37,6 +37,7 @@ export async function main(ns) {
     }
     let history = [];
     let orders = [];
+    let start = Date.now();
     let revenue = 0;
     const maxLen = 5;
     while (true) {
@@ -73,7 +74,7 @@ export async function main(ns) {
             //     ns.print("Opening long on ", s, ", price: ", ns.formatNumber(ns.stock.getPurchaseCost(s, num, "Long")));
             //     ns.stock.buyStock(s, num);
             } else if (!stocks[s][Pos.NUM_LONG] && !stocks[s][Pos.NUM_SHORT]) {
-                if (avg >= 0.6) {
+                if (avg >= 0.55) {
                     let num = minStockPurchasable(ns, s, "Long", 1);
                     orders.push("+ Long " + s + ": " + ns.formatNumber(ns.stock.getPurchaseCost(s, num, "Long")));
                     ns.stock.buyStock(s, num);
@@ -102,6 +103,7 @@ export async function main(ns) {
         }
         ns.print("__________________________");
         ns.print("Total G/L: ", ns.formatNumber(revenue))
+        ns.print("Active time: ", ns.tFormat(Date.now() - start))
         await ns.asleep(3000);
     }
 }
